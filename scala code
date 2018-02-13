@@ -1,0 +1,54 @@
+import org.apache.kafka.common.serialization.StringDeserializer
+import org.apache.spark.sql.SQLContext
+import org.apache.spark.streaming.kafka010._
+import org.apache.spark.streaming.kafka010.LocationStrategies.PreferConsistent
+import org.apache.spark.streaming.kafka010.ConsumerStrategies.Subscribe
+import org.apache.spark.{SparkConf, SparkContext}
+import org.apache.spark.streaming.{Seconds, StreamingContext}
+
+
+object Main {
+  def main(args: Array[String]): Unit = {
+
+
+    val conf = new SparkConf().setAppName("KafkaWordCount").setMaster("local[*]")
+    val ssc = new StreamingContext(conf, Seconds(15))
+
+    val kafkaParams = Map[String, Object](
+      "bootstrap.servers" -> "localhost:9092",
+      "key.deserializer" -> classOf[StringDeserializer],
+      "value.deserializer" -> classOf[StringDeserializer],
+      "group.id" -> "group1",
+      "auto.offset.reset" -> "earliest",
+      "enable.auto.commit" -> (false: java.lang.Boolean)
+    )//,localhost:9094,localhost:9095"
+
+    val topics = Array("test")
+    val stream = KafkaUtils.createDirectStream[String, String](
+      ssc,
+      PreferConsistent,
+      Subscribe[String, String](topics, kafkaParams)
+    )
+
+    val out = stream.map(record =>
+      record.value
+    )
+
+    val words = out.flatMap(_.split(" "))
+    val count = words.map(word => (word, 1))
+    val wdc = count.reduceByKey(_+_)
+
+    val sqlContext = SQLContext.getOrCreate(SparkContext.getOrCreate())
+
+    wdc.foreachRDD{rdd=>
+            val es = sqlContext.createDataFrame(rdd).toDF("word","count")
+            import org.elasticsearch.spark.sql._
+            es.saveToEs("wordcount/testing")
+      es.show()
+    }
+
+    ssc.start()
+    ssc.awaitTermination()
+
+  }
+}
